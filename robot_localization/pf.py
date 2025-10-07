@@ -33,7 +33,7 @@ class Particle(object):
         """ Construct a new Particle
             x: the x-coordinate of the hypothesis relative to the map frame
             y: the y-coordinate of the hypothesis relative ot the map frame
-            theta: the yaw of KeyboardInterruptthe hypothesis relative to the map frame
+            theta: the yaw of the hypothesis relative to the map frame
             w: the particle weight (the class does not ensure that particle weights are normalized """ 
         self.w = w
         self.theta = theta
@@ -184,7 +184,7 @@ class ParticleFilter(Node):
         # first make sure that the particle weights are normalized
         self.normalize_particles()
 
-        # TODO: assign the latest pose into self.robot_pose as a geometry_msgs.Pose object
+        # TODO: assign the latest pose into self.robot_pose as a geometry_msgs.Pose object ZARAIUS
         # just to get started we will fix the robot's pose to always be at the origin
         self.robot_pose = Pose()
         if hasattr(self, 'odom_pose'):
@@ -212,7 +212,7 @@ class ParticleFilter(Node):
             self.current_odom_xy_theta = new_odom_xy_theta
             return
 
-        # TODO: modify particles using delta
+        # TODO: modify particles using delta ZARAIUS
 
     def resample_particles(self):
         """ Resample the particles according to the new particle weights.
@@ -222,14 +222,14 @@ class ParticleFilter(Node):
         """
         # make sure the distribution is normalized
         self.normalize_particles()
-        # TODO: fill out the rest of the implementation
+        # TODO: fill out the rest of the implementation BEN
 
     def update_particles_with_laser(self, r, theta):
         """ Updates the particle weights in response to the scan data
             r: the distance readings to obstacles
             theta: the angle relative to the robot frame for each corresponding reading 
         """
-        # TODO: implement this
+        # TODO: implement this ZARAIUS
         pass
 
     def update_initial_pose(self, msg):
@@ -246,14 +246,14 @@ class ParticleFilter(Node):
         if xy_theta is None:
             xy_theta = self.transform_helper.convert_pose_to_xy_and_theta(self.odom_pose)
         self.particle_cloud = []
-        # TODO create particles
+        # TODO create particles BEN
 
         self.normalize_particles()
         self.update_robot_pose()
 
     def normalize_particles(self):
         """ Make sure the particle weights define a valid distribution (i.e. sum to 1.0) """
-        # TODO: implement this
+        # TODO: implement this BEN
         pass
 
     def publish_particles(self, timestamp):
