@@ -184,10 +184,25 @@ class ParticleFilter(Node):
         """
         # first make sure that the particle weights are normalized
         self.normalize_particles()
-
+        # lets find the mean pose
+        # might need to convert_translation_rotation_to_pose
+        x = y = theta = 0
+        for p in self.particle_cloud:
+            x += p.x
+            y += p.y
+            theta += p.theta * 180 / math.pi #might not be right, angle wrapping?
+        x = x/len(self.particle_cloud)
+        y = y/len(self.particle_cloud)
+        theta = theta/len(self.particle_cloud)
         # TODO: assign the latest pose into self.robot_pose as a geometry_msgs.Pose object ZARAIUS
+        
         # just to get started we will fix the robot's pose to always be at the origin
         self.robot_pose = Pose()
+        self.robot_pose.x = x
+        self.robot_pose.y = y
+        self.robot_pose.z = 0 # dont know if needed
+        self.robot_pose.orientation.z = theta
+        self.get_logger().info("Robots mean position is {self.robot_pose}")
         if hasattr(self, 'odom_pose'):
             self.transform_helper.fix_map_to_odom_transform(self.robot_pose,
                                                             self.odom_pose)
@@ -212,8 +227,14 @@ class ParticleFilter(Node):
         else:
             self.current_odom_xy_theta = new_odom_xy_theta
             return
-
+        
         # TODO: modify particles using delta ZARAIUS
+
+        for p in self.particle_cloud:
+            p.x += delta(0)
+            p.y += delta(1)
+            p.orientation.z += delta(2)
+        
 
     def resample_particles(self):
         """ Resample the particles according to the new particle weights.
@@ -236,8 +257,8 @@ class ParticleFilter(Node):
         particle_arr = np.array(particles)
         weight_arr = np.array(weights)
 
-        width = self.occupancy_grid.map.info.width
-        height = self.occupancy_grid.map.info.height
+        width = self.occupancy_field.map.info.width
+        height = self.occupancy_field.map.info.height
         x_grid,y_grid,theta_grid = np.mgrid[0:width,0:height,0:360]
         interp = griddata(particle_arr,weight_arr,(x_grid,y_grid,theta_grid),method="linear")
 
@@ -271,8 +292,8 @@ class ParticleFilter(Node):
         self.particle_cloud = []
 
         # Initialize particles w/ uniform distribution, map frame
-        width = self.occupancy_grid.map.info.width
-        height = self.occupancy_grid.map.info.height
+        width = self.occupancy_field.map.info.width
+        height = self.occupancy_field.map.info.height
         idx_list = list(np.ndindex(width,height,360))
 
         # Sum to 1, uniform distribution
@@ -298,7 +319,7 @@ class ParticleFilter(Node):
         
         for i,sample in enumerate(samples):
             sample_x,sample_y,_ = sample
-            while self.occupancy_grid.get_closest_obstacle_difference(sample_x,sample_y) < 1:
+            while self.occupancy_field.get_closest_obstacle_difference(sample_x,sample_y) < 1:
                 samples[i] = draw_random_sample(choices,probabilities,1)
                 sample_x,sample_y = samples[i]
             new_particle_list.append(Particle(samples[i][0],samples[i][1],samples[i][2],1.0))
