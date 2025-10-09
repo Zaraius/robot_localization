@@ -16,9 +16,10 @@ import math
 import time
 import numpy as np
 from occupancy_field import OccupancyField
-from helper_functions import TFHelper
+from helper_functions import TFHelper, draw_random_sample
 from rclpy.qos import qos_profile_sensor_data
 from angle_helpers import quaternion_from_euler
+from scipy.interpolate import griddata
 
 class Particle(object):
     """ Represents a hypothesis (particle) of the robot's pose consisting of x,y and theta (yaw)
@@ -222,7 +223,29 @@ class ParticleFilter(Node):
         """
         # make sure the distribution is normalized
         self.normalize_particles()
-        # TODO: fill out the rest of the implementation BEN
+
+        particles = []
+        weights = []
+
+        for p in self.particle_cloud:
+            # TODO: make neater way of mapping theta (rad) to angle idx
+            theta_deg = p.theta * 180 / math.pi
+            particles.append(int(p.x),int(p.y),int(theta_deg))
+            weights.append(p.w)
+
+        particle_arr = np.array(particles)
+        weight_arr = np.array(weights)
+
+        width = self.occupancy_grid.map.info.width
+        height = self.occupancy_grid.map.info.height
+        x_grid,y_grid,theta_grid = np.mgrid[0:width,0:height,0:360]
+        interp = griddata(particle_arr,weight_arr,(x_grid,y_grid,theta_grid),method="linear")
+
+        idx_list = list(np.ndindex(width,height,360))
+        weight_interp = interp.ravel()
+        probabilities = (weight_interp / np.sum(weight_interp)).tolist()
+
+        self.particle_cloud = self.generate_valid_particles(idx_list,probabilities)
 
     def update_particles_with_laser(self, r, theta):
         """ Updates the particle weights in response to the scan data
@@ -246,15 +269,41 @@ class ParticleFilter(Node):
         if xy_theta is None:
             xy_theta = self.transform_helper.convert_pose_to_xy_and_theta(self.odom_pose)
         self.particle_cloud = []
-        # TODO create particles BEN
 
-        self.normalize_particles()
+        # Initialize particles w/ uniform distribution, map frame
+        width = self.occupancy_grid.map.info.width
+        height = self.occupancy_grid.map.info.height
+        idx_list = list(np.ndindex(width,height,360))
+
+        # Sum to 1, uniform distribution
+        probabilities = [1 / len(idx_list)] * len(idx_list)
+
+        self.particle_cloud = self.generate_valid.particles(idx_list,probabilities)
+
+        # self.normalize_particles()
+        
         self.update_robot_pose()
 
     def normalize_particles(self):
         """ Make sure the particle weights define a valid distribution (i.e. sum to 1.0) """
         # TODO: implement this BEN
         pass
+
+    def generate_valid_particles(self,choices,probabilities):
+        """ 
+        Sample particles until all are not within obstacles
+        """
+        samples = draw_random_sample(choices,probabilities,self.n_particles)
+        new_particle_list = []
+        
+        for i,sample in enumerate(samples):
+            sample_x,sample_y,_ = sample
+            while self.occupancy_grid.get_closest_obstacle_difference(sample_x,sample_y) < 1:
+                samples[i] = draw_random_sample(choices,probabilities,1)
+                sample_x,sample_y = samples[i]
+            new_particle_list.append(Particle(samples[i][0],samples[i][1],samples[i][2],1.0))
+        
+        return new_particle_list
 
     def publish_particles(self, timestamp):
         msg = ParticleCloud()
