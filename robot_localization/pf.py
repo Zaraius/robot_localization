@@ -16,7 +16,7 @@ import math
 import time
 import numpy as np
 from occupancy_field import OccupancyField
-from helper_functions import TFHelper, draw_random_sample, convert_translation_rotation_to_pose
+from helper_functions import TFHelper, draw_random_sample
 from rclpy.qos import qos_profile_sensor_data
 from angle_helpers import quaternion_from_euler
 from scipy.interpolate import griddata
@@ -197,7 +197,7 @@ class ParticleFilter(Node):
 
         translation = [x, y, 0]
         rotation = [0,0,theta,1] # I think last index of quaternion should be 1 but have to verify
-        new_pose = convert_translation_rotation_to_pose(translation, rotation)
+        new_pose = self.occupancy_field.convert_translation_rotation_to_pose(translation, rotation)
         # TODO: assign the latest pose into self.robot_pose as a geometry_msgs.Pose object ZARAIUS
         
         # just to get started we will fix the robot's pose to always be at the origin
@@ -277,8 +277,8 @@ class ParticleFilter(Node):
         min_distance = np.argmin(r)
         # TODO: implement this ZARAIUS
         for p in self.particle_cloud:
-            p_distance = 0
-            error = p_distance - min_distance
+            p_distance = self.occupancy_field.get_closest_obstacle_distance(p.x, p.y)
+            error = math.abs(p_distance - min_distance)
             p.w = error #normalize here or is that done later?
         
 
