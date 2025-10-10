@@ -16,7 +16,7 @@ import math
 import time
 import numpy as np
 from occupancy_field import OccupancyField
-from helper_functions import TFHelper, draw_random_sample
+from helper_functions import TFHelper, draw_random_sample, convert_translation_rotation_to_pose
 from rclpy.qos import qos_profile_sensor_data
 from angle_helpers import quaternion_from_euler
 from scipy.interpolate import griddata
@@ -194,14 +194,14 @@ class ParticleFilter(Node):
         x = x/len(self.particle_cloud)
         y = y/len(self.particle_cloud)
         theta = theta/len(self.particle_cloud)
+
+        translation = [x, y, 0]
+        rotation = [0,0,theta,1] # I think last index of quaternion should be 1 but have to verify
+        new_pose = convert_translation_rotation_to_pose(translation, rotation)
         # TODO: assign the latest pose into self.robot_pose as a geometry_msgs.Pose object ZARAIUS
         
         # just to get started we will fix the robot's pose to always be at the origin
-        self.robot_pose = Pose()
-        self.robot_pose.x = x
-        self.robot_pose.y = y
-        self.robot_pose.z = 0 # dont know if needed
-        self.robot_pose.orientation.z = theta
+        self.robot_pose = new_pose
         self.get_logger().info("Robots mean position is {self.robot_pose}")
         if hasattr(self, 'odom_pose'):
             self.transform_helper.fix_map_to_odom_transform(self.robot_pose,
@@ -234,7 +234,7 @@ class ParticleFilter(Node):
             p.x += delta(0)
             p.y += delta(1)
             p.orientation.z += delta(2)
-        
+
 
     def resample_particles(self):
         """ Resample the particles according to the new particle weights.
@@ -273,8 +273,14 @@ class ParticleFilter(Node):
             r: the distance readings to obstacles
             theta: the angle relative to the robot frame for each corresponding reading 
         """
+        # min_distance = np.argmin(self.scan_to_process.ranges)
+        min_distance = np.argmin(r)
         # TODO: implement this ZARAIUS
-        pass
+        for p in self.particle_cloud:
+            p_distance = 0
+            error = p_distance - min_distance
+            p.w = error #normalize here or is that done later?
+        
 
     def update_initial_pose(self, msg):
         """ Callback function to handle re-initializing the particle filter based on a pose estimate.
