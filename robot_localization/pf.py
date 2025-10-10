@@ -133,8 +133,11 @@ class ParticleFilter(Node):
             
             You do not need to modify this function, but it is helpful to understand it.
         """
+        
+        # THIS WILL NOT RUN IF YOU DON'T RUN THE BAG FILE
         if self.scan_to_process is None:
             return
+
         msg = self.scan_to_process
 
         (new_pose, delta_t) = self.transform_helper.get_matching_odom_pose(self.odom_frame,
@@ -146,7 +149,7 @@ class ParticleFilter(Node):
                 # we will never get this transform, since it is before our oldest one
                 self.scan_to_process = None
             return
-        
+
         (r, theta) = self.transform_helper.convert_scan_to_polar_in_robot_frame(msg, self.base_frame)
         print("r[0]={0}, theta[0]={1}".format(r[0], theta[0]))
         # clear the current scan so that we can process the next one
@@ -158,10 +161,16 @@ class ParticleFilter(Node):
 
         if not self.current_odom_xy_theta:
             self.current_odom_xy_theta = new_odom_xy_theta
+            self.get_logger().info("No current odom")
+
         elif not self.particle_cloud:
+            self.get_logger().info("No particle cloud")
+
             # now that we have all of the necessary transforms we can update the particle cloud
             self.initialize_particle_cloud(msg.header.stamp)
         elif self.moved_far_enough_to_update(new_odom_xy_theta):
+            self.get_logger().info("We've moved")
+
             # we have moved far enough to do an update!
             self.update_particles_with_odom()    # update based on odometry
             self.update_particles_with_laser(r, theta)   # update based on laser scan
