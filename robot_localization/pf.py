@@ -133,7 +133,8 @@ class ParticleFilter(Node):
             
             You do not need to modify this function, but it is helpful to understand it.
         """
-        
+        self.get_logger().info("We've moved")
+
         # THIS WILL NOT RUN IF YOU DON'T RUN THE BAG FILE
         if self.scan_to_process is None:
             return
@@ -195,26 +196,29 @@ class ParticleFilter(Node):
         self.normalize_particles()
         # lets find the mean pose
         # might need to convert_translation_rotation_to_pose
-        x = y = theta = 0
+        x = y = theta = weight_sum = 0
         for p in self.particle_cloud:
-            x += p.x
-            y += p.y
-            theta += p.theta * 180 / math.pi #might not be right, angle wrapping?
-        x = x/len(self.particle_cloud)
-        y = y/len(self.particle_cloud)
-        theta = theta/len(self.particle_cloud)
+            x += p.x * p.w
+            y += p.y * p.w
+            theta += (p.theta * p.w * 180 / math.pi)%360
+            weight_sum += p.w
+        # Dividing by sum of weights to get weighted mean 
+        x = x/weight_sum
+        y = y/weight_sum
+        theta = theta/weight_sum
 
         translation = [x, y, 0]
-        rotation = [0,0,theta,1] # I think last index of quaternion should be 1 but have to verify
-        new_pose = self.occupancy_field.convert_translation_rotation_to_pose(translation, rotation)
+        rotation = quaternion_from_euler(0,0,theta)
+        # new_pose = self.occupancy_field.convert_translation_rotation_to_pose(translation, rotation)
+        new_pose = self.transform_helper.convert_translation_rotation_to_pose(translation, rotation)
         # TODO: assign the latest pose into self.robot_pose as a geometry_msgs.Pose object ZARAIUS
         
-        # just to get started we will fix the robot's pose to always be at the origin
         self.robot_pose = new_pose
         self.get_logger().info("Robots mean position is {self.robot_pose}")
         if hasattr(self, 'odom_pose'):
             self.transform_helper.fix_map_to_odom_transform(self.robot_pose,
                                                             self.odom_pose)
+            self.transform_helper.send_last_map_to_odom_transform("map","odom",self.last_scan_timestamp)
         else:
             self.get_logger().warn("Can't set map->odom transform since no odom data received")
 
