@@ -316,7 +316,7 @@ class ParticleFilter(Node):
         """
         print(f"Beginning update particles with laser; there are {len(self.particle_cloud)} particles remaining")
         # min_distance = np.argmin(self.scan_to_process.ranges)
-        min_distance = np.argmin(r)
+        min_distance = np.min(r)
 
         # Filter any that have gone out of bounds
         new_p_cloud = []
