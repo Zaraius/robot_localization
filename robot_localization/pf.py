@@ -78,6 +78,8 @@ class ParticleFilter(Node):
         self.scan_topic = "scan"        # the topic where we will get laser scans from 
 
         self.n_particles = 300          # the number of particles to use
+        self.xy_std_dev = 0.5
+        self.theta_std_dev = 0.3
 
         self.d_thresh = 0.2             # the amount of linear movement before performing an update
         self.a_thresh = math.pi/6       # the amount of angular movement before performing an update
@@ -206,7 +208,7 @@ class ParticleFilter(Node):
             y += p.y * p.w
             theta += (p.theta * p.w)%(2 * math.pi)
             weight_sum += p.w
-            print(f"weights of p {p.w}")
+            #print(f"weights of p {p.w}")
         # Dividing by sum of weights to get weighted mean 
         print(f"weight sum {weight_sum}")
         x = x/weight_sum
@@ -250,11 +252,11 @@ class ParticleFilter(Node):
         # TODO: modify particles using delta ZARAIUS
 
         for p in self.particle_cloud:
-            print(f"Particle: {p.x}, {p.y}, {p.theta}, {p.w}")
+            #print(f"Particle: {p.x}, {p.y}, {p.theta}, {p.w}")
             p.x += delta[0]
             p.y += delta[1]
             p.theta += delta[2]
-            print(f"Particle after odom update: {p.x}, {p.y}, {p.theta}, {p.w}")
+            #print(f"Particle after odom update: {p.x}, {p.y}, {p.theta}, {p.w}")
 
     def resample_particles(self):
         """ Resample the particles according to the new particle weights.
@@ -262,28 +264,46 @@ class ParticleFilter(Node):
             particle is selected in the resampling step.  You may want to make use of the given helper
             function draw_random_sample in helper_functions.py.
         """
+        t_resample_start = time.perf_counter()
         print(f"Beginning resample particles; there are {len(self.particle_cloud)} particles remaining")
         weights = [p.w for p in self.particle_cloud]
         weight_arr = np.array(weights)
-        print(f"weight arr before normalizeation{weight_arr}")
-        print(f"length of particle cloud before normal: {len(self.particle_cloud)}")
-        print(f"length of weight arr before normal: {len(weight_arr.tolist())}")
+        #print(f"weight arr before normalizeation{weight_arr}")
+        #print(f"length of particle cloud before normal: {len(self.particle_cloud)}")
+        #print(f"length of weight arr before normal: {len(weight_arr.tolist())}")
         # make sure the distribution is normalized
         self.normalize_particles()
 
         weights = [p.w for p in self.particle_cloud]
         weight_arr = np.array(weights)
-        print(f"{weight_arr}")
-        print(f"length of particle cloud: {len(self.particle_cloud)}")
-        print(f"length of weight arr: {len(weight_arr.tolist())}")
+
+        #print(f"{weight_arr}")
+        #print(f"length of particle cloud: {len(self.particle_cloud)}")
+        #print(f"length of weight arr: {len(weight_arr.tolist())}")
 
         new_particles = draw_random_sample(self.particle_cloud,weight_arr,self.n_particles)
+        self.particle_cloud = []
+        for p in new_particles:
+            p.x += np.random.normal(0,self.xy_std_dev)
+            p.y += np.random.normal(0,self.theta_std_dev)
+            if not self.check_particle_bounds(p):
+                # Throw away out of bounds particles
+                continue
+            if not self.occupancy_field.get_closest_obstacle_distance(p.x,p.y) < 1:
+                # Throw away particles in obstacle
+                continue
+            #while self.occupancy_field.get_closest_obstacle_distance(p.x,p.y) < 1:
+            #    p.x += np.random.normal(0,self.xy_std_dev)
+            #    p.y += np.random.normal(0,self.theta_std_dev)
+            p.theta = np.random.normal(0,self.theta_std_dev)
+            self.particle_cloud.append(p)
+            
 
         #particle_arr = np.array(particles)
         #weight_arr = np.array(weights)
 
-        width = self.occupancy_field.map.info.width * self.occupancy_field.map.info.resolution
-        height = self.occupancy_field.map.info.height * self.occupancy_field.map.info.resolution
+        #width = self.occupancy_field.map.info.width * self.occupancy_field.map.info.resolution
+        #height = self.occupancy_field.map.info.height * self.occupancy_field.map.info.resolution
         #x_grid,y_grid,theta_grid = np.mgrid[0:width,0:height,0:360]
         #interp = griddata(particle_arr,weight_arr,(x_grid,y_grid,theta_grid),method="linear")
 
@@ -292,7 +312,8 @@ class ParticleFilter(Node):
         #probabilities = (weight_interp / np.sum(weight_interp)).tolist()
 
         #self.particle_cloud = self.generate_valid_particles(idx_list,probabilities)
-        self.particle_cloud = new_particles
+        #self.particle_cloud = new_particles
+        print(f"Resample elapsed time: {time.perf_counter() - t_resample_start}")
 
     def check_particle_bounds(self,p):
         res = self.occupancy_field.map.info.resolution
@@ -300,9 +321,9 @@ class ParticleFilter(Node):
         height = self.occupancy_field.map.info.height
         start_x = self.occupancy_field.map.info.origin.position.x
         start_y = self.occupancy_field.map.info.origin.position.y
-        print(f"checking px {(p.x - start_x)/res}")
-        print(f"checking py {(p.y - start_y)/res}")
-        print(f"total width {width} total height {height}")
+        #print(f"checking px {(p.x - start_x)/res}")
+        #print(f"checking py {(p.y - start_y)/res}")
+        #print(f"total width {width} total height {height}")
         if not (0 < (p.x - start_x)/res < width):
             return False
         if not (0 < (p.y - start_y)/res < height):
@@ -329,8 +350,8 @@ class ParticleFilter(Node):
             p_distance = self.occupancy_field.get_closest_obstacle_distance(p.x, p.y)
             if (math.isnan(p_distance)):
                 print(f"RAHRAHRH x {p.x} y {p.y}\n\n\n\n") 
-            print(f"input is {p.x} and {p.y}")
-            print(f"p distance {p_distance}, min dist = {min_distance}")
+            #print(f"input is {p.x} and {p.y}")
+            #print(f"p distance {p_distance}, min dist = {min_distance}")
             error = abs(p_distance - min_distance)
             p.w = error #normalize here or is that done later?
         
@@ -365,9 +386,9 @@ class ParticleFilter(Node):
 
         for i in range(self.n_particles):
             while self.occupancy_field.get_closest_obstacle_distance(x_rand[i],y_rand[i]) < 1 or not 0 < (x_rand[i]-start_x)/res < 903 or not 0 < (y_rand[i]-start_y)/res < 1706:
-                print("retrying point in obstacle")
-                print(f"x val {(x_rand[i]-start_x)/res}")
-                print(f"y val {(y_rand[i]-start_y)/res}")
+                #print("retrying point in obstacle")
+                #print(f"x val {(x_rand[i]-start_x)/res}")
+                #print(f"y val {(y_rand[i]-start_y)/res}")
                 x_rand[i] = np.random.uniform(low=start_x,high=start_x+width)
                 y_rand[i] = np.random.uniform(low=start_y,high=start_y+height)
             self.particle_cloud.append(Particle(x_rand[i],y_rand[i],theta_rand[i],1.0))
@@ -394,7 +415,7 @@ class ParticleFilter(Node):
         """
         print("starting generate valid particles")
         samples = draw_random_sample(choices,probabilities,self.n_particles)
-        print("drew random sample")
+        #print("drew random sample")
         new_particle_list = []
         
         for i,sample in enumerate(samples):
