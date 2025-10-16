@@ -30,6 +30,7 @@ def draw_random_sample(choices, probabilities, n):
     values = np.array(range(len(choices)))
     probs = np.array(probabilities)
     bins = np.add.accumulate(probs)
+    print(f"{bins=}")
     inds = values[np.digitize(random_sample(n), bins)]
     samples = []
     for i in inds:

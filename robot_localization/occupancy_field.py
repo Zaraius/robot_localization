@@ -87,6 +87,7 @@ class OccupancyField(object):
         """ Compute the closest obstacle to the specified (x,y) coordinate in
             the map.  If the (x,y) coordinate is out of the map boundaries, nan
             will be returned. """
+        # TODO make real fix for this
         x_coord = (x - self.map.info.origin.position.x)/self.map.info.resolution
         y_coord = (y - self.map.info.origin.position.y)/self.map.info.resolution
         if type(x) is np.ndarray:
@@ -97,6 +98,10 @@ class OccupancyField(object):
             y_coord = int(y_coord)
 
         is_valid = (x_coord >= 0) & (y_coord >= 0) & (x_coord < self.map.info.width) & (y_coord < self.map.info.height)
+        if (not is_valid):
+            print("\n\n\n\nSDJFKJSDHFKSDFHKSJDHFkjSDFHSDFSDFSJKDFSJDKF\n\n\n\n")
+            print(f"{x_coord}, {y_coord}")
+
         if type(x) is np.ndarray:
             distances = np.float('nan')*np.ones(x_coord.shape)
             distances[is_valid] = self.closest_occ[x_coord[is_valid], y_coord[is_valid]]
