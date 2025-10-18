@@ -77,12 +77,13 @@ class ParticleFilter(Node):
         self.odom_frame = "odom"        # the name of the odometry coordinate frame
         self.scan_topic = "scan"        # the topic where we will get laser scans from 
 
-        self.n_particles = 300          # the number of particles to use
-        self.xy_std_dev = 0.5
-        self.theta_std_dev = 0.3
+        self.n_particles = 1000          # was 300 the number of particles to use
+        self.proportion_random = 0.0   # proportion of particles to randomly generate each iteration
+        self.xy_std_dev = 0.5           # was 0.5 standard deviation of random changes to linear position
+        self.theta_std_dev = 0.8        # was 0.3 standard deviation of random changes to orientation
 
-        self.d_thresh = 0.2             # the amount of linear movement before performing an update
-        self.a_thresh = math.pi/6       # the amount of angular movement before performing an update
+        self.d_thresh = 0.3             # was 0.2 the amount of linear movement before performing an update
+        self.a_thresh = math.pi/4       # was math.pi/6 the amount of angular movement before performing an update
 
         # TODO: define additional constants if needed
 
@@ -210,7 +211,7 @@ class ParticleFilter(Node):
         """
         print(f"Beginning update robot pose; there are {len(self.particle_cloud)} particles remaining")
         # first make sure that the particle weights are normalized
-        # self.normalize_particles()
+        self.normalize_particles()
         # lets find the mean pose
         # might need to convert_translation_rotation_to_pose
         x = y = theta = weight_sum = 0
@@ -221,7 +222,7 @@ class ParticleFilter(Node):
             weight_sum += p.w
             #print(f"weights of p {p.w}")
         # Dividing by sum of weights to get weighted mean 
-        print(f"weight sum {weight_sum}")
+        # print(f"weight sum {weight_sum}")
         x = x/weight_sum
         y = y/weight_sum
         theta = theta/weight_sum
@@ -230,11 +231,27 @@ class ParticleFilter(Node):
         rotation = quaternion_from_euler(0,0,theta)
         # new_pose = self.occupancy_field.convert_translation_rotation_to_pose(translation, rotation)
         new_pose = self.transform_helper.convert_translation_rotation_to_pose(translation, rotation)
+        # highest_w = 0
+        # for p in self.particle_cloud:
+        #     if p.w > highest_w:
+        #         highest_w = p.w
+        #         x = p.x
+        #         y = p.y
+        #         theta = p.theta
+        # translation = [x, y, 0.0]
+        # rotation = quaternion_from_euler(0,0,theta)
+        # new_pose = self.transform_helper.convert_translation_rotation_to_pose(translation, rotation)
+    
         # TODO: assign the latest pose into self.robot_pose as a geometry_msgs.Pose object ZARAIUS
-        
+        # if hasattr(self, 'robot_pose'):
+            # self.get_logger().info(f"Robots old position estimate is x: {self.robot_pose.position.x}, y: {self.robot_pose.position.y}, orientation: {self.robot_pose.orientation.z}")
+            # self.get_logger().info(f"Robots new position estimate is {new_pose.position.x}, y: {new_pose.position.y}, orientation {new_pose.orientation.z}")
+        # self.get_logger().info(f"Difference in position estimates is {self.robot_pose.position.x - self.new_pose.position.x}")
+
+
         self.robot_pose = new_pose
-        self.get_logger().info(f"Robots mean position is {self.robot_pose}")
         if hasattr(self, 'odom_pose'):
+            # print("YOU ARE NOT CRAZY\n\n\n")
             self.transform_helper.fix_map_to_odom_transform(self.robot_pose,
                                                             self.odom_pose)
         else:
@@ -291,8 +308,11 @@ class ParticleFilter(Node):
         #print(f"{weight_arr}")
         #print(f"length of particle cloud: {len(self.particle_cloud)}")
         #print(f"length of weight arr: {len(weight_arr.tolist())}")
+        n_random = int(self.n_particles * self.proportion_random)
+        n_not_random = self.n_particles - n_random
 
-        new_particles = draw_random_sample(self.particle_cloud,weight_arr,self.n_particles)
+        random_particles = self.generate_uniform_particles(n_random)
+        new_particles = draw_random_sample(self.particle_cloud,weight_arr,n_not_random)
         self.particle_cloud = []
         for p in new_particles:
             p.x += np.random.normal(0,self.xy_std_dev)
@@ -308,7 +328,9 @@ class ParticleFilter(Node):
             #    p.y += np.random.normal(0,self.theta_std_dev)
             p.theta = np.random.normal(0,self.theta_std_dev)
             self.particle_cloud.append(p)
-            
+        self.particle_cloud += random_particles
+        
+        # print(f"Resample elapsed time: {time.perf_counter() - t_resample_start}")
 
         #particle_arr = np.array(particles)
         #weight_arr = np.array(weights)
@@ -373,6 +395,33 @@ class ParticleFilter(Node):
         xy_theta = self.transform_helper.convert_pose_to_xy_and_theta(msg.pose.pose)
         self.initialize_particle_cloud(msg.header.stamp, xy_theta)
 
+    def generate_uniform_particles(self,count):
+            """
+            Return a list of valid particles drawn from a uniform distribution
+            Used both in initialization as well as in small quantities every step
+            """
+            # Initialize particles w/ uniform distribution, map frame
+            res = self.occupancy_field.map.info.resolution
+            width = self.occupancy_field.map.info.width * res # physical units
+            height = self.occupancy_field.map.info.height * res # physical units
+            start_x = self.occupancy_field.map.info.origin.position.x
+            start_y = self.occupancy_field.map.info.origin.position.y
+
+            x_rand = np.random.uniform(low=start_x,high=start_x+width,size=(count))
+            y_rand = np.random.uniform(low=start_y,high=start_y+height,size=(count))
+            theta_rand = np.random.uniform(low=-1*math.pi,high=math.pi,size=(count))
+
+            p_list = []
+            for i in range(count):
+                while self.occupancy_field.get_closest_obstacle_distance(x_rand[i],y_rand[i]) < 1 or not 0 < (x_rand[i]-start_x)/res < 903 or not 0 < (y_rand[i]-start_y)/res < 1706:
+                    #print("retrying point in obstacle")
+                    #print(f"x val {(x_rand[i]-start_x)/res}")
+                    #print(f"y val {(y_rand[i]-start_y)/res}")
+                    x_rand[i] = np.random.uniform(low=start_x,high=start_x+width)
+                    y_rand[i] = np.random.uniform(low=start_y,high=start_y+height)
+                p_list.append(Particle(x_rand[i],y_rand[i],theta_rand[i],0.0001))
+            return p_list
+
     def initialize_particle_cloud(self, timestamp, xy_theta=None):
         """ Initialize the particle cloud.
             Arguments
@@ -380,31 +429,8 @@ class ParticleFilter(Node):
                       particle cloud around.  If this input is omitted, the odometry will be used """
         if xy_theta is None:
             xy_theta = self.transform_helper.convert_pose_to_xy_and_theta(self.odom_pose)
-        self.particle_cloud = []
 
-        # Initialize particles w/ uniform distribution, map frame
-        res = self.occupancy_field.map.info.resolution
-        width = self.occupancy_field.map.info.width * res # physical units
-        height = self.occupancy_field.map.info.height * res # physical units
-        start_x = self.occupancy_field.map.info.origin.position.x #* self.occupancy_field.map.info.resolution
-        start_y = self.occupancy_field.map.info.origin.position.y #* self.occupancy_field.map.info.resolution
-
-        #idx_list = list(np.ndindex(width,height,360)) # problematic
-
-        x_rand = np.random.uniform(low=start_x,high=start_x+width,size=(self.n_particles))
-        y_rand = np.random.uniform(low=start_y,high=start_y+height,size=(self.n_particles))
-        theta_rand = np.random.uniform(low=-1*math.pi,high=math.pi,size=(self.n_particles))
-
-        for i in range(self.n_particles):
-            while self.occupancy_field.get_closest_obstacle_distance(x_rand[i],y_rand[i]) < 1 or not 0 < (x_rand[i]-start_x)/res < 903 or not 0 < (y_rand[i]-start_y)/res < 1706:
-                #print("retrying point in obstacle")
-                #print(f"x val {(x_rand[i]-start_x)/res}")
-                #print(f"y val {(y_rand[i]-start_y)/res}")
-                x_rand[i] = np.random.uniform(low=start_x,high=start_x+width)
-                y_rand[i] = np.random.uniform(low=start_y,high=start_y+height)
-            self.particle_cloud.append(Particle(x_rand[i],y_rand[i],theta_rand[i],1.0))
-
-        #self.normalize_particles()
+        self.particle_cloud = self.generate_uniform_particles(self.n_particles)
         self.update_robot_pose()
 
     def normalize_particles(self):
