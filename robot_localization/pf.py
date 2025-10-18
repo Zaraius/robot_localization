@@ -138,7 +138,7 @@ class ParticleFilter(Node):
             You do not need to modify this function, but it is helpful to understand it.
         """
         #self.get_logger().info("Start of run loop")
-
+        loop_time = time.perf_counter() 
         # THIS WILL NOT RUN IF YOU DON'T RUN THE BAG FILE
         if self.scan_to_process is None:
             return
@@ -156,13 +156,13 @@ class ParticleFilter(Node):
             return
 
         (r, theta) = self.transform_helper.convert_scan_to_polar_in_robot_frame(msg, self.base_frame)
-        print("r[0]={0}, theta[0]={1}".format(r[0], theta[0]))
+        # print("r[0]={0}, theta[0]={1}".format(r[0], theta[0]))
         # clear the current scan so that we can process the next one
         self.scan_to_process = None
 
         self.odom_pose = new_pose
         new_odom_xy_theta = self.transform_helper.convert_pose_to_xy_and_theta(self.odom_pose)
-        print("x: {0}, y: {1}, yaw: {2}".format(*new_odom_xy_theta))
+        # print("x: {0}, y: {1}, yaw: {2}".format(*new_odom_xy_theta))
 
         if not self.current_odom_xy_theta:
             self.current_odom_xy_theta = new_odom_xy_theta
@@ -177,14 +177,25 @@ class ParticleFilter(Node):
             self.get_logger().info("We've moved")
 
             # we have moved far enough to do an update!
+            t_resample_start = time.perf_counter()
             self.update_particles_with_odom()    # update based on odometry
+            
+            # print(f"Update Particle with Odom: {time.perf_counter() - t_resample_start}")
+            t_resample_start = time.perf_counter()
             self.update_particles_with_laser(r, theta)   # update based on laser scan
+            # print(f"Update Particle with Laser: {time.perf_counter() - t_resample_start}")
+            t_resample_start = time.perf_counter()
             self.update_robot_pose()                # update robot's pose based on particles
+
+            # print(f"Update Robot Pose: {time.perf_counter() - t_resample_start}")
+            t_resample_start = time.perf_counter()
             self.resample_particles()               # resample particles to focus on areas of high density
+            # print(f"Resample Particles: {time.perf_counter() - t_resample_start}")
+
         # publish particles (so things like rviz can see them)
         #print("about to publish particles")
         self.publish_particles(msg.header.stamp)
-
+        # print(f"Total loop time: {time.perf_counter() - loop_time}")
     def moved_far_enough_to_update(self, new_odom_xy_theta):
         return math.fabs(new_odom_xy_theta[0] - self.current_odom_xy_theta[0]) > self.d_thresh or \
                math.fabs(new_odom_xy_theta[1] - self.current_odom_xy_theta[1]) > self.d_thresh or \
@@ -264,7 +275,7 @@ class ParticleFilter(Node):
             particle is selected in the resampling step.  You may want to make use of the given helper
             function draw_random_sample in helper_functions.py.
         """
-        t_resample_start = time.perf_counter()
+        # t_resample_start = time.perf_counter()
         print(f"Beginning resample particles; there are {len(self.particle_cloud)} particles remaining")
         weights = [p.w for p in self.particle_cloud]
         weight_arr = np.array(weights)
@@ -313,7 +324,7 @@ class ParticleFilter(Node):
 
         #self.particle_cloud = self.generate_valid_particles(idx_list,probabilities)
         #self.particle_cloud = new_particles
-        print(f"Resample elapsed time: {time.perf_counter() - t_resample_start}")
+        # print(f"Resample elapsed time: {time.perf_counter() - t_resample_start}")
 
     def check_particle_bounds(self,p):
         res = self.occupancy_field.map.info.resolution
