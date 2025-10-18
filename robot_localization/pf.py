@@ -20,6 +20,7 @@ from helper_functions import TFHelper, draw_random_sample
 from rclpy.qos import qos_profile_sensor_data
 from angle_helpers import quaternion_from_euler
 from scipy.interpolate import griddata
+import matplotlib as plt
 
 class Particle(object):
     """ Represents a hypothesis (particle) of the robot's pose consisting of x,y and theta (yaw)
@@ -104,6 +105,9 @@ class ParticleFilter(Node):
         self.scan_to_process = None
         # your particle cloud will go here
         self.particle_cloud = []
+        self.sum_weights = 1
+        self.weight_means = []
+        self.weight_stds = []
 
         self.current_odom_xy_theta = []
         self.occupancy_field = OccupancyField(self)
@@ -184,6 +188,8 @@ class ParticleFilter(Node):
             # print(f"Update Particle with Odom: {time.perf_counter() - t_resample_start}")
             t_resample_start = time.perf_counter()
             self.update_particles_with_laser(r, theta)   # update based on laser scan
+            self.calculate_convergence()
+            print(f"Convergence:\nMean: {self.weight_means},\nStd Dev: {self.weight_stds}")
             # print(f"Update Particle with Laser: {time.perf_counter() - t_resample_start}")
             t_resample_start = time.perf_counter()
             self.update_robot_pose()                # update robot's pose based on particles
@@ -386,7 +392,7 @@ class ParticleFilter(Node):
             #print(f"input is {p.x} and {p.y}")
             #print(f"p distance {p_distance}, min dist = {min_distance}")
             error = abs(p_distance - min_distance)
-            p.w = error #normalize here or is that done later?
+            p.w = 1/error #normalize here or is that done later?
         
 
     def update_initial_pose(self, msg):
@@ -437,12 +443,12 @@ class ParticleFilter(Node):
         """ Make sure the particle weights define a valid distribution (i.e. sum to 1.0) """
         print(f"Beginning normalize particles; there are {len(self.particle_cloud)} particles remaining")
         weights = [p.w for p in self.particle_cloud]
-        sum_weights = sum(weights)
+        self.sum_weights = sum(weights)
         
         new_particles = []
         for p in self.particle_cloud:
-            # print(f"checking p.w {p.w/sum_weights}")
-            new_particles.append(Particle(p.x,p.y,p.theta,p.w/sum_weights))
+            # print(f"checking p.w {p.w/self.sum_weights}")
+            new_particles.append(Particle(p.x,p.y,p.theta,p.w/self.sum_weights))
         
         self.particle_cloud = new_particles
 
@@ -463,6 +469,17 @@ class ParticleFilter(Node):
             new_particle_list.append(Particle(samples[i][0],samples[i][1],samples[i][2],1.0))
         
         return new_particle_list
+    
+    def calculate_convergence(self):
+        """
+        Calculates mean and std dev of particle scores
+        """
+        unscaled_weights = [p.w * self.sum_weights for p in self.particle_cloud]
+        mean = np.mean(unscaled_weights)
+        std = np.std(unscaled_weights)
+
+        self.weight_means.append(mean)
+        self.weight_stds.append(std)
 
     def publish_particles(self, timestamp):
         msg = ParticleCloud()
