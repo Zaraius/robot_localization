@@ -79,13 +79,14 @@ class ParticleFilter(Node):
         self.scan_topic = "scan"        # the topic where we will get laser scans from 
 
         self.n_particles = 1000          # was 300 the number of particles to use
-        self.proportion_random = 0.0   # proportion of particles to randomly generate each iteration
+        self.proportion_random = 0.01   # proportion of particles to randomly generate each iteration
         self.xy_std_dev = 0.5           # was 0.5 standard deviation of random changes to linear position
         self.theta_std_dev = 0.8        # was 0.3 standard deviation of random changes to orientation
 
         self.d_thresh = 0.3             # was 0.2 the amount of linear movement before performing an update
         self.a_thresh = math.pi/4       # was math.pi/6 the amount of angular movement before performing an update
-
+        self.sigma = 0.5  # sensor/model noise, tune as needed
+        self.eps = 1e-12
         # TODO: define additional constants if needed
 
         # pose_listener responds to selection of a new approximate robot location (for instance using rviz)
@@ -185,19 +186,19 @@ class ParticleFilter(Node):
             t_resample_start = time.perf_counter()
             self.update_particles_with_odom()    # update based on odometry
             
-            # print(f"Update Particle with Odom: {time.perf_counter() - t_resample_start}")
+            print(f"Update Particle with Odom: {time.perf_counter() - t_resample_start}")
             t_resample_start = time.perf_counter()
             self.update_particles_with_laser(r, theta)   # update based on laser scan
             self.calculate_convergence()
             print(f"Convergence:\nMean: {self.weight_means},\nStd Dev: {self.weight_stds}")
-            # print(f"Update Particle with Laser: {time.perf_counter() - t_resample_start}")
+            print(f"Update Particle with Laser: {time.perf_counter() - t_resample_start}")
             t_resample_start = time.perf_counter()
             self.update_robot_pose()                # update robot's pose based on particles
 
-            # print(f"Update Robot Pose: {time.perf_counter() - t_resample_start}")
+            print(f"Update Robot Pose: {time.perf_counter() - t_resample_start}")
             t_resample_start = time.perf_counter()
             self.resample_particles()               # resample particles to focus on areas of high density
-            # print(f"Resample Particles: {time.perf_counter() - t_resample_start}")
+            print(f"Resample Particles: {time.perf_counter() - t_resample_start}")
 
         # publish particles (so things like rviz can see them)
         #print("about to publish particles")
@@ -218,20 +219,28 @@ class ParticleFilter(Node):
         print(f"Beginning update robot pose; there are {len(self.particle_cloud)} particles remaining")
         # first make sure that the particle weights are normalized
         self.normalize_particles()
-        # lets find the mean pose
-        # might need to convert_translation_rotation_to_pose
-        x = y = theta = weight_sum = 0
+
+        # weighted linear mean for x,y
+        sum_w = 0.0
+        sum_x = 0.0
+        sum_y = 0.0
+        sum_sin = 0.0
+        sum_cos = 0.0
         for p in self.particle_cloud:
-            x += p.x * p.w
-            y += p.y * p.w
-            theta += (p.theta * p.w)%(2 * math.pi)
-            weight_sum += p.w
-            #print(f"weights of p {p.w}")
-        # Dividing by sum of weights to get weighted mean 
-        # print(f"weight sum {weight_sum}")
-        x = x/weight_sum
-        y = y/weight_sum
-        theta = theta/weight_sum
+            w = p.w
+            sum_w += w
+            sum_x += p.x * w
+            sum_y += p.y * w
+            sum_sin += math.sin(p.theta) * w
+            sum_cos += math.cos(p.theta) * w
+
+        if sum_w == 0:
+            self.get_logger().warn("All particle weights zero when computing pose; skipping pose update")
+            return
+
+        x = sum_x / sum_w
+        y = sum_y / sum_w
+        theta = math.atan2(sum_sin / sum_w, sum_cos / sum_w)
 
         translation = [x, y, 0.0]
         rotation = quaternion_from_euler(0,0,theta)
@@ -300,40 +309,45 @@ class ParticleFilter(Node):
         """
         # t_resample_start = time.perf_counter()
         print(f"Beginning resample particles; there are {len(self.particle_cloud)} particles remaining")
-        weights = [p.w for p in self.particle_cloud]
-        weight_arr = np.array(weights)
-        #print(f"weight arr before normalizeation{weight_arr}")
-        #print(f"length of particle cloud before normal: {len(self.particle_cloud)}")
-        #print(f"length of weight arr before normal: {len(weight_arr.tolist())}")
-        # make sure the distribution is normalized
-        self.normalize_particles()
+        if not self.particle_cloud:
+            return
 
         weights = [p.w for p in self.particle_cloud]
-        weight_arr = np.array(weights)
+        # protect against all-zero weights
+        total_w = sum(weights)
+        if total_w <= 0:
+            # reset to uniform small weights
+            for p in self.particle_cloud:
+                p.w = 1.0 / len(self.particle_cloud)
+            weight_arr = np.array([p.w for p in self.particle_cloud])
+        else:
+            weight_arr = np.array(weights) / total_w
 
-        #print(f"{weight_arr}")
-        #print(f"length of particle cloud: {len(self.particle_cloud)}")
-        #print(f"length of weight arr: {len(weight_arr.tolist())}")
         n_random = int(self.n_particles * self.proportion_random)
         n_not_random = self.n_particles - n_random
 
         random_particles = self.generate_uniform_particles(n_random)
-        new_particles = draw_random_sample(self.particle_cloud,weight_arr,n_not_random)
+        new_particles = draw_random_sample(self.particle_cloud, weight_arr, n_not_random)
+
         self.particle_cloud = []
         for p in new_particles:
-            p.x += np.random.normal(0,self.xy_std_dev)
-            p.y += np.random.normal(0,self.theta_std_dev)
+            # add x/y and theta perturbations (use correct std devs)
+            p.x += np.random.normal(0, self.xy_std_dev)
+            p.y += np.random.normal(0, self.xy_std_dev)
+            # discard particles that go out of bounds
             if not self.check_particle_bounds(p):
                 # Throw away out of bounds particles
                 continue
-            if not self.occupancy_field.get_closest_obstacle_distance(p.x,p.y) < 1:
+            if self.occupancy_field.get_closest_obstacle_distance(p.x,p.y) < 1:
                 # Throw away particles in obstacle
                 continue
             #while self.occupancy_field.get_closest_obstacle_distance(p.x,p.y) < 1:
             #    p.x += np.random.normal(0,self.xy_std_dev)
             #    p.y += np.random.normal(0,self.theta_std_dev)
-            p.theta = np.random.normal(0,self.theta_std_dev)
+            p.theta += np.random.normal(0,self.theta_std_dev)
             self.particle_cloud.append(p)
+
+        # add valid random particles
         self.particle_cloud += random_particles
         
         # print(f"Resample elapsed time: {time.perf_counter() - t_resample_start}")
@@ -369,30 +383,27 @@ class ParticleFilter(Node):
             return False
         return True
 
-    def update_particles_with_laser(self, r, theta):
+    def  update_particles_with_laser(self, r, theta):
         """ Updates the particle weights in response to the scan data
             r: the distance readings to obstacles
             theta: the angle relative to the robot frame for each corresponding reading 
         """
         print(f"Beginning update particles with laser; there are {len(self.particle_cloud)} particles remaining")
-        # min_distance = np.argmin(self.scan_to_process.ranges)
-        min_distance = np.min(r)
+        # Use a likelihood-field style sensor model: weight = exp(-0.5 * (dist_to_obstacle / sigma)^2)
 
-        # Filter any that have gone out of bounds
-        new_p_cloud = []
-        for p in self.particle_cloud:
-            if self.check_particle_bounds(p):
-                new_p_cloud.append(p)
-        self.particle_cloud = new_p_cloud
+
+        # Filter out-of-bounds particles first
+        self.particle_cloud = [p for p in self.particle_cloud if self.check_particle_bounds(p)]
 
         for p in self.particle_cloud:
             p_distance = self.occupancy_field.get_closest_obstacle_distance(p.x, p.y)
             if (math.isnan(p_distance)):
                 print(f"RAHRAHRH x {p.x} y {p.y}\n\n\n\n") 
+                p.w = self.eps
+            else:
+                p.w = math.exp(-0.5 * (p_distance **2) / (self.sigma ** 2)) + self.eps
             #print(f"input is {p.x} and {p.y}")
             #print(f"p distance {p_distance}, min dist = {min_distance}")
-            error = abs(p_distance - min_distance)
-            p.w = 1/error #normalize here or is that done later?
         
 
     def update_initial_pose(self, msg):
@@ -408,24 +419,33 @@ class ParticleFilter(Node):
             """
             # Initialize particles w/ uniform distribution, map frame
             res = self.occupancy_field.map.info.resolution
-            width = self.occupancy_field.map.info.width * res # physical units
-            height = self.occupancy_field.map.info.height * res # physical units
+            width_m = self.occupancy_field.map.info.width * res # physical units
+            height_m = self.occupancy_field.map.info.height * res # physical units
             start_x = self.occupancy_field.map.info.origin.position.x
             start_y = self.occupancy_field.map.info.origin.position.y
 
-            x_rand = np.random.uniform(low=start_x,high=start_x+width,size=(count))
-            y_rand = np.random.uniform(low=start_y,high=start_y+height,size=(count))
+            # number of cells (used for bounds checking)
+            width_cells = self.occupancy_field.map.info.width
+            height_cells = self.occupancy_field.map.info.height
+
+            x_rand = np.random.uniform(low=start_x,high=start_x+width_m,size=(count))
+            y_rand = np.random.uniform(low=start_y,high=start_y+height_m,size=(count))
             theta_rand = np.random.uniform(low=-1*math.pi,high=math.pi,size=(count))
 
             p_list = []
             for i in range(count):
-                while self.occupancy_field.get_closest_obstacle_distance(x_rand[i],y_rand[i]) < 1 or not 0 < (x_rand[i]-start_x)/res < 903 or not 0 < (y_rand[i]-start_y)/res < 1706:
-                    #print("retrying point in obstacle")
-                    #print(f"x val {(x_rand[i]-start_x)/res}")
-                    #print(f"y val {(y_rand[i]-start_y)/res}")
-                    x_rand[i] = np.random.uniform(low=start_x,high=start_x+width)
-                    y_rand[i] = np.random.uniform(low=start_y,high=start_y+height)
-                p_list.append(Particle(x_rand[i],y_rand[i],theta_rand[i],0.0001))
+                # retry until particle is not inside obstacle and within bounds
+                tries = 0
+                while (self.occupancy_field.get_closest_obstacle_distance(x_rand[i],y_rand[i]) < 1) or \
+                      (not 0 < (x_rand[i]-start_x)/res < width_cells) or \
+                      (not 0 < (y_rand[i]-start_y)/res < height_cells):
+                    x_rand[i] = np.random.uniform(low=start_x,high=start_x+width_m)
+                    y_rand[i] = np.random.uniform(low=start_y,high=start_y+height_m)
+                    tries += 1
+                    if tries > 200:
+                        # fallback: break to avoid infinite loop on pathological maps
+                        break
+                p_list.append(Particle(x_rand[i],y_rand[i],theta_rand[i],1.0/count))
             return p_list
 
     def initialize_particle_cloud(self, timestamp, xy_theta=None):
@@ -443,13 +463,18 @@ class ParticleFilter(Node):
         """ Make sure the particle weights define a valid distribution (i.e. sum to 1.0) """
         print(f"Beginning normalize particles; there are {len(self.particle_cloud)} particles remaining")
         weights = [p.w for p in self.particle_cloud]
-        self.sum_weights = sum(weights)
-        
+        total = sum(weights)
+        if total <= 0:
+            # avoid division by zero — assign uniform weights
+            n = max(1, len(self.particle_cloud))
+            self.particle_cloud = [Particle(p.x,p.y,p.theta,1.0/n) for p in self.particle_cloud]
+            self.sum_weights = 1.0
+            return
+
+        self.sum_weights = total
         new_particles = []
         for p in self.particle_cloud:
-            # print(f"checking p.w {p.w/self.sum_weights}")
-            new_particles.append(Particle(p.x,p.y,p.theta,p.w/self.sum_weights))
-        
+            new_particles.append(Particle(p.x,p.y,p.theta,p.w/total))
         self.particle_cloud = new_particles
 
     def generate_valid_particles(self,choices,probabilities):
