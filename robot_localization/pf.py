@@ -21,6 +21,7 @@ from rclpy.qos import qos_profile_sensor_data
 from angle_helpers import quaternion_from_euler
 from scipy.interpolate import griddata
 import matplotlib as plt
+import scipy.stats as sp
 
 class Particle(object):
     """ Represents a hypothesis (particle) of the robot's pose consisting of x,y and theta (yaw)
@@ -78,13 +79,13 @@ class ParticleFilter(Node):
         self.odom_frame = "odom"        # the name of the odometry coordinate frame
         self.scan_topic = "scan"        # the topic where we will get laser scans from 
 
-        self.n_particles = 1000          # was 300 the number of particles to use
+        self.n_particles = 500          # was 300 the number of particles to use
         self.proportion_random = 0.01   # proportion of particles to randomly generate each iteration
-        self.xy_std_dev = 0.5           # was 0.5 standard deviation of random changes to linear position
+        self.xy_std_dev = 0.1           # was 0.5 standard deviation of random changes to linear position
         self.theta_std_dev = 0.8        # was 0.3 standard deviation of random changes to orientation
 
-        self.d_thresh = 0.3             # was 0.2 the amount of linear movement before performing an update
-        self.a_thresh = math.pi/4       # was math.pi/6 the amount of angular movement before performing an update
+        self.d_thresh = 0.2             # was 0.2 the amount of linear movement before performing an update
+        self.a_thresh = math.pi/6       # was math.pi/6 the amount of angular movement before performing an update
         self.sigma = 0.5  # sensor/model noise, tune as needed
         self.eps = 1e-12
         # TODO: define additional constants if needed
@@ -194,7 +195,7 @@ class ParticleFilter(Node):
             
             print(f"Update Particle with Odom: {time.perf_counter() - t_resample_start}")
             t_resample_start = time.perf_counter()
-            self.update_particles_with_laser_projection(r, theta)   # update based on laser scan
+            self.update_particles_with_laser(r, theta)   # update based on laser scan
             self.calculate_convergence()
             print(f"Convergence:\nMean: {self.weight_means},\nStd Dev: {self.weight_stds}")
             print(f"Update Particle with Laser: {time.perf_counter() - t_resample_start}")
@@ -217,41 +218,31 @@ class ParticleFilter(Node):
 
 
     def update_robot_pose(self):
-        """ Update the estimate of the robot's pose given the updated particles.
-            There are two logical methods for this:
-                (1): compute the mean pose
-                (2): compute the most likely pose (i.e. the mode of the distribution)
-        """
         print(f"Beginning update robot pose; there are {len(self.particle_cloud)} particles remaining")
-        # first make sure that the particle weights are normalized
-        self.normalize_particles()
+        if not self.particle_cloud:
+            return
 
-        # weighted linear mean for x,y
-        sum_w = 0.0
-        sum_x = 0.0
-        sum_y = 0.0
-        sum_sin = 0.0
-        sum_cos = 0.0
+        # normalize weights once
+        total_w = sum(p.w for p in self.particle_cloud)
+        if total_w <= 0:
+            n = len(self.particle_cloud)
+            for p in self.particle_cloud:
+                p.w = 1.0 / n
+            total_w = 1.0
+
+        sum_x = sum_y = sum_sin = sum_cos = 0.0
         for p in self.particle_cloud:
-            w = p.w
-            sum_w += w
+            w = p.w / total_w
             sum_x += p.x * w
             sum_y += p.y * w
             sum_sin += math.sin(p.theta) * w
             sum_cos += math.cos(p.theta) * w
 
-        if sum_w == 0:
-            self.get_logger().warn("All particle weights zero when computing pose; skipping pose update")
-            return
-
-        x = sum_x / sum_w
-        y = sum_y / sum_w
-        theta = math.atan2(sum_sin / sum_w, sum_cos / sum_w)
-
-        translation = [x, y, 0.0]
-        rotation = quaternion_from_euler(0,0,theta)
-        # new_pose = self.occupancy_field.convert_translation_rotation_to_pose(translation, rotation)
+        theta = math.atan2(sum_sin, sum_cos)
+        translation = [sum_x, sum_y, 0.0]
+        rotation = quaternion_from_euler(0, 0, theta)
         new_pose = self.transform_helper.convert_translation_rotation_to_pose(translation, rotation)
+        
         # highest_w = 0
         # for p in self.particle_cloud:
         #     if p.w > highest_w:
@@ -279,33 +270,46 @@ class ParticleFilter(Node):
             self.get_logger().warn("Can't set map->odom transform since no odom data received")
 
     def update_particles_with_odom(self):
-        """ Update the particles using the newly given odometry pose.
-            The function computes the value delta which is a tuple (x,y,theta)
-            that indicates the change in position and angle between the odometry
-            when the particles were last updated and the current odometry.
-        """
+        """Update each particle based on odometry delta using the rot1-trans-rot2 model."""
         print(f"Beginning update particles with odom; there are {len(self.particle_cloud)} particles remaining")
-        new_odom_xy_theta = self.transform_helper.convert_pose_to_xy_and_theta(self.odom_pose)
-        # compute the change in x,y,theta since our last update
-        if self.current_odom_xy_theta:
-            old_odom_xy_theta = self.current_odom_xy_theta
-            delta = (new_odom_xy_theta[0] - self.current_odom_xy_theta[0],
-                     new_odom_xy_theta[1] - self.current_odom_xy_theta[1],
-                     new_odom_xy_theta[2] - self.current_odom_xy_theta[2])
+        new_odom = self.transform_helper.convert_pose_to_xy_and_theta(self.odom_pose)
 
-            self.current_odom_xy_theta = new_odom_xy_theta
-        else:
-            self.current_odom_xy_theta = new_odom_xy_theta
+        if not self.current_odom_xy_theta:
+            self.current_odom_xy_theta = new_odom
             return
-        
-        # TODO: modify particles using delta ZARAIUS
+
+        old_x, old_y, old_theta = self.current_odom_xy_theta
+        new_x, new_y, new_theta = new_odom
+
+        # compute delta in odom frame (old -> new)
+        dx = new_x - old_x
+        dy = new_y - old_y
+        trans = math.hypot(dx, dy)
+        rot1 = math.atan2(dy, dx) - old_theta
+        rot2 = (new_theta - old_theta) - rot1
+
+        # normalize
+        rot1 = (rot1 + math.pi) % (2*math.pi) - math.pi
+        rot2 = (rot2 + math.pi) % (2*math.pi) - math.pi
+
+        # Now update stored odom (after computing delta)
+        self.current_odom_xy_theta = (new_x, new_y, new_theta)
+
+        # Motion noise params (tune — see suggestions below)
+        # Option: scale noise with trans and absolute rotation
+        trans_std = 0.02 + 0.05 * abs(trans)    # example: base + proportional
+        rot_std = 0.02 + 0.05 * (abs(rot1) + abs(rot2))
 
         for p in self.particle_cloud:
-            #print(f"Particle: {p.x}, {p.y}, {p.theta}, {p.w}")
-            p.x += delta[0]
-            p.y += delta[1]
-            p.theta += delta[2]
-            #print(f"Particle after odom update: {p.x}, {p.y}, {p.theta}, {p.w}")
+            r1 = rot1 + np.random.normal(0, rot_std)
+            t  = trans + np.random.normal(0, trans_std)
+            r2 = rot2 + np.random.normal(0, rot_std)
+
+            p.x += t * math.cos(p.theta + r1)
+            p.y += t * math.sin(p.theta + r1)
+            p.theta += (r1 + r2)
+            # normalize theta
+            p.theta = (p.theta + math.pi) % (2 * math.pi) - math.pi
 
     def resample_particles(self):
         """ Resample the particles according to the new particle weights.
@@ -344,7 +348,7 @@ class ParticleFilter(Node):
             if not self.check_particle_bounds(p):
                 # Throw away out of bounds particles
                 continue
-            if self.occupancy_field.get_closest_obstacle_distance(p.x,p.y) < 1:
+            if self.occupancy_field.get_closest_obstacle_distance(p.x,p.y) < 1: # why is this 1 and not 0?
                 # Throw away particles in obstacle
                 continue
             #while self.occupancy_field.get_closest_obstacle_distance(p.x,p.y) < 1:
@@ -410,39 +414,7 @@ class ParticleFilter(Node):
                 p.w = math.exp(-0.5 * (p_distance **2) / (self.sigma ** 2)) + self.eps
             #print(f"input is {p.x} and {p.y}")
             #print(f"p distance {p_distance}, min dist = {min_distance}")
-        
-        # Define how many laser scan points to use 
-        if hasattr(self, "sample_count") and self.sample_count < valid_idx.size:
-            sample_count = self.sample_count
-        else:
-            sample_count = valid_idx.size
 
-        print(f"{valid_idx.size} valid sampling points; choosing {sample_count} of them")
-        # If we're sampling fewer than our number of valid points, select some at random
-        if valid_idx.size > sample_count:
-            valid_idx = np.random.choice(valid_idx, size=sample_count, replace=False)
-
-        for p in self.particle_cloud:
-            px = p.x
-            py = p.y
-            p_theta = p.theta
-            score = 0
-
-            # Project laser scan points from current particle pose to get sampled distances
-            for theta_index in valid_idx:
-                angle = p_theta + theta_arr[theta_index]
-                proj_x = px + r_arr[theta_index] * np.cos(angle)
-                proj_y = py + r_arr[theta_index] * np.sin(angle)
-
-                # Should be near zero if the laser scan is accurate
-                err = self.occupancy_field.get_closest_obstacle_distance(proj_x,proj_y)
-                if math.isnan(err):
-                    err = 100
-                # We may want to scale or pass err through a function at this point
-                score += 1/max(err,eps)
-
-            p.w = score / sample_count
-            #print(f"Weight {score}, ",end=" ")
 
     def update_initial_pose(self, msg):
         """ Callback function to handle re-initializing the particle filter based on a pose estimate.
