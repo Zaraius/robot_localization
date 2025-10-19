@@ -79,8 +79,8 @@ class ParticleFilter(Node):
         self.scan_topic = "scan"        # the topic where we will get laser scans from 
 
         self.n_particles = 1000          # was 300 the number of particles to use
-        self.proportion_random = 0.0   # proportion of particles to randomly generate each iteration
-        self.xy_std_dev = 0.5           # was 0.5 standard deviation of random changes to linear position
+        self.proportion_random = 0.00   # proportion of particles to randomly generate each iteration
+        self.xy_std_dev = 0.5          # was 0.5 standard deviation of random changes to linear position
         self.theta_std_dev = 0.8        # was 0.3 standard deviation of random changes to orientation
 
         self.d_thresh = 0.3             # was 0.2 the amount of linear movement before performing an update
@@ -108,6 +108,12 @@ class ParticleFilter(Node):
         self.sum_weights = 1
         self.weight_means = []
         self.weight_stds = []
+
+        self.std_x = []
+        self.std_y = []
+        self.std_theta = []
+
+        self.sample_count = 20
 
         self.current_odom_xy_theta = []
         self.occupancy_field = OccupancyField(self)
@@ -187,7 +193,7 @@ class ParticleFilter(Node):
             
             # print(f"Update Particle with Odom: {time.perf_counter() - t_resample_start}")
             t_resample_start = time.perf_counter()
-            self.update_particles_with_laser(r, theta)   # update based on laser scan
+            self.update_particles_with_laser_projection(r, theta)   # update based on laser scan
             self.calculate_convergence()
             print(f"Convergence:\nMean: {self.weight_means},\nStd Dev: {self.weight_stds}")
             # print(f"Update Particle with Laser: {time.perf_counter() - t_resample_start}")
@@ -393,7 +399,59 @@ class ParticleFilter(Node):
             #print(f"p distance {p_distance}, min dist = {min_distance}")
             error = abs(p_distance - min_distance)
             p.w = 1/error #normalize here or is that done later?
+
+    def update_particles_with_laser_projection(self,r,theta):
+        """ Updates the particle weights in response to the scan data
+            r: the distance readings to obstacles
+            theta: the angle relative to the robot frame for each corresponding reading 
+
+            Uses projections of laser scan points on the map frame to score
+        """
+        r_arr = np.asarray(r)
+        theta_arr = np.asarray(theta)
+
+        valid_r = (r_arr > self.scan_r_min) & (r_arr < self.scan_r_max)
+        valid_idx = np.where(valid_r)[0]
+
+        eps = 0.001
+
+        # Exit early if no valid scan points found
+        if valid_idx.size < 1:
+            print("No valid laser scan points were found")
+            return
         
+        # Define how many laser scan points to use 
+        if hasattr(self, "sample_count") and self.sample_count < valid_idx.size:
+            sample_count = self.sample_count
+        else:
+            sample_count = valid_idx.size
+
+        print(f"{valid_idx.size} valid sampling points; choosing {sample_count} of them")
+        # If we're sampling fewer than our number of valid points, select some at random
+        if valid_idx.size > sample_count:
+            valid_idx = np.random.choice(valid_idx, size=sample_count, replace=False)
+
+        for p in self.particle_cloud:
+            px = p.x
+            py = p.y
+            p_theta = p.theta
+            score = 0
+
+            # Project laser scan points from current particle pose to get sampled distances
+            for theta_index in valid_idx:
+                angle = p_theta + theta_arr[theta_index]
+                proj_x = px + r_arr[theta_index] * np.cos(angle)
+                proj_y = py + r_arr[theta_index] * np.sin(angle)
+
+                # Should be near zero if the laser scan is accurate
+                err = self.occupancy_field.get_closest_obstacle_distance(proj_x,proj_y)
+                if math.isnan(err):
+                    err = 100
+                # We may want to scale or pass err through a function at this point
+                score += 1/max(err,eps)
+
+            p.w = score / sample_count
+            #print(f"Weight {score}, ",end=" ")
 
     def update_initial_pose(self, msg):
         """ Callback function to handle re-initializing the particle filter based on a pose estimate.
@@ -474,6 +532,14 @@ class ParticleFilter(Node):
         """
         Calculates mean and std dev of particle scores
         """
+        x = [p.x for p in self.particle_cloud]
+        y = [p.y for p in self.particle_cloud]
+        theta = [p.theta for p in self.particle_cloud]
+
+        self.std_x.append(np.std(x))
+        self.std_x.append(np.std(y))
+        self.std_x.append(np.std(theta))
+
         unscaled_weights = [p.w * self.sum_weights for p in self.particle_cloud]
         mean = np.mean(unscaled_weights)
         std = np.std(unscaled_weights)
@@ -495,6 +561,8 @@ class ParticleFilter(Node):
         # self.scan_to_process is set to None in the run_loop 
         if self.scan_to_process is None:
             self.scan_to_process = msg
+            self.scan_r_min = msg.range_min
+            self.scan_r_max = msg.range_max
 
 def main(args=None):
     rclpy.init()
