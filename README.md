@@ -1,13 +1,20 @@
-Steps to run
+## Particle Filter Implementation
 
-ros2 launch robot_localization test_pf.py map_yaml:=src/robot_localization/maps/mac_1st_floor_final.yaml
+Implementation of a particle filter using LiDAR scan data for a mobile robot, using ROS2 Humble. 
 
-ros2 bag play src/robot_localization/bags/macfirst_floor_take_2/macfirst_floor_take_2_0.db3 --clock
+### Running the filter
 
-rviz2 -d ~/ros2_ws/src/robot_localization/rviz/turtlebot_bag_files.rviz
+This project requires a working ROS2 Humble environment. 
+After cloning the repository, building with colcon, and souring the `install/` directory, the following commands, run in separate terminals, will launch the particle filter, rosbag recording of the robot movement, and visualizer:
 
-There are two bag files inside of the /bags folder. We ran our particle filter on the input sensor data and recorded the output. They correspond to the two takes of the input data, particle-filter-take-1 is the output of running our particle filter on macfirst_floor_take_1 and particle-filter-take-2 is the output of macfirst_floor_take_2. The following topics are being recorded: /accel /odom /cmd_vel /tf /tf_static /base_footprint /map /scan /particle_cloud
-The /odom topic is our estimated robot pose calculated from our particle cloud whose topic is /particle_cloud
+```ros2 launch robot_localization test_pf.py map_yaml:=src/robot_localization/maps/mac_1st_floor_final.yaml```
+
+```rviz2 -d ~/ros2_ws/src/robot_localization/rviz/turtlebot_bag_files.rviz```
+
+```ros2 bag play src/robot_localization/bags/macfirst_floor_take_2/macfirst_floor_take_2_0.db3 --clock```
+
+There are two bag files inside of the `/bags` folder. We ran our particle filter on the input sensor data and recorded the output. They correspond to the two takes of the input data, particle-filter-take-1 is the output of running our particle filter on macfirst_floor_take_1 and particle-filter-take-2 is the output of macfirst_floor_take_2. The following topics are being recorded: `/accel /odom /cmd_vel /tf /tf_static /base_footprint /map /scan /particle_cloud`
+The `/odom` topic is our estimated robot pose calculated from our particle cloud, whose topic is `/particle_cloud`
 
 ### Project Goal
 
@@ -17,12 +24,19 @@ The actual pose estimate of the robot is calculated as a weighted sum of the par
 
 One downside of the algorithm is the tendency for particles to converge to local optima that may be far away from a global optimum, especially if the map has symmetry to it. To avoid this, we add a small number of particles uniformly sampled from the space of all possible poses every iteration, ensuring we can escape convergence towards a poor guess. 
 
+![Particle filter converged](./media/particle_filter_converged.png)
+
+We were able to achieve this goal, running our particle filter on a rosbag recording of a robot moving around the first floor of the Academic Center, given an occupancy grid of the map. The filter was able to converge to a reasonably accurate pose estimate, measured by both the convergence of the algorithm as well as the agreement between the robot laser scan data and the map obstacles and walls. 
+
 ### Implementation / Solution
 
 We implemented our particle filter 
 
+![Particle filter diagram](./media/Particle%20Filter.drawio.png)
+
 ### Design Decisions
 
+One
 
 ### Challenges
 
@@ -41,3 +55,9 @@ If we had more time, we could spend more time tuning the scoring of particles in
 We would also like to make certain fixed parameters of our algorithm variable depending on the current state of the particle filter. For instance, we could have an adaptive particle count, where more particles are generated when the particles haven't converged as much, while fewer are generated when it does converge. We could also have the standard deviation of our particle generation noise, or the proportion of our random particles, decrease once our pose estimate converges --- this would be similar to optimization techniques like simulated annealing, where we lower a temperature parameter (our random particle proportions and standard deviations) over time in order to find a good spot to converge initially but hold ourselves tighter to it afterwards. 
 
 ### Lessons Learned
+
+One lesson we learned was to be very careful about the relation between physical units of distance (meters, for instance) and the discretized distances representing occupancy grid cell indices. Initially, we assumed almost all results would be in grid cell indices, and were incorrectly calling the occupancy grid distance to obstacle functions because of that. This also led to us making errors in the bounds checking for our particles, as the units we passed the function were not what it expected.
+
+One of our consistent sources of errors throughout the project was behavior caused by simple typos, particularly around boolean checks. For instance, we spent over and hour debugging and trying to improve our particle scoring when in reality we found we were rewarding particles with more error rather than the opposite, and similarly spent a while locating our particles before realizing we were publishing their positions outside of the map, as we hadn't represented them in physical units. Some of these bugs could have been caught more easily had we chosen an easier environment to test in, and so we may have had more luck had we tried a simpler environment (for instance, the Neato gauntlet test world in simulation) rather than the full map of the first floor of the Academic Center. 
+
+This lends itself to another lesson learned --- we should verify the filter works (at least vaguely) on a simple case before trying to optimize. Measuring the performance of different parameters, like the standard deviation of different noise sources or the proportion of particles randomly generated every iteration, was only possible once we had a valid implementation already working. When the filter wasn't working at all, in times like when we had erroneously flipped the particle scoring, tuning these parameters had no visible effect, and served largely as a waste of time in the moment. We might have also tested different components of the filter in isolation --- when we were initially listing every possible tuple of indices, not realizing how unworkably large such a list would be, we didn't test this on our map in isolation, and instead worked through the entire run loop trying to find what was causing our program to hang. 
