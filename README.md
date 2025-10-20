@@ -36,7 +36,10 @@ We implemented our particle filter
 
 ### Design Decisions
 
-One
+Adding noise to updating particles
+At first we weren't adding any noise to our particles and were moving them directly with the robot pose. This isn't realistic because odometry based on wheel movement has some error in it. Because of this when updating our particles we move them by the odometry delta and add some random noise and model this uncertainty. We are assuming that the robot does a rotation, translation, rotation between each update which allows us to encapsulate all possibilities of robot movement. This allows us to add Gaussian noise to the translation and rotation individually for every single particle. It is also important to add this noise in the local frame of the particle instead of the global frame which creates realistic places the particle could be instead of adding random noise. With this noise the particles are able to spread out, allowing for a better resampling instead of having all of the particles drifting together in the case of the robot drifting.
+
+Using multiple laser beams instead of closest one
 
 ### Challenges
 
