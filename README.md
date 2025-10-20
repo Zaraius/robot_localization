@@ -6,6 +6,9 @@ ros2 bag play src/robot_localization/bags/macfirst_floor_take_2/macfirst_floor_t
 
 rviz2 -d ~/ros2_ws/src/robot_localization/rviz/turtlebot_bag_files.rviz
 
+There are two bag files inside of the /bags folder. We ran our particle filter on the input sensor data and recorded the output. They correspond to the two takes of the input data, particle-filter-take-1 is the output of running our particle filter on macfirst_floor_take_1 and particle-filter-take-2 is the output of macfirst_floor_take_2. The following topics are being recorded: /accel /odom /cmd_vel /tf /tf_static /base_footprint /map /scan /particle_cloud
+The /odom topic is our estimated robot pose calculated from our particle cloud whose topic is /particle_cloud
+
 ### Project Goal
 
 The goal of our project was to implent the core functionality of a particle filter, an algorithm for robot localization within a known map. The particle filter works by making a large number of initial guesses for the current robot pose, where each pose estimate is referred to as a particle. After the robot moves a meaningful distance, the filter uses the sensor data from the robot (in our case, a lidar scan) in order to weigh each particle based on how correct it seems. If the scan data closely aligns with what it hypothetically would be given the particle is a correct guess, the filter gives more weight to the particle; otherwise, the filter gives less weight to that particle. After weighing the particles, the filter normalizes the weights such that they sum to one (i.e., define a valid probability distribution) and chooses another set of particles from the initial particles, drawn with each particle's weight giving the probability of selecting it. To explore the entire state of possible estimates, we add noise to each new particle, normally distributed in each dimension, allowing guesses to shift and become more refined with time. 

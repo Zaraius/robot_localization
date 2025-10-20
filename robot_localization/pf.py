@@ -88,7 +88,6 @@ class ParticleFilter(Node):
         self.a_thresh = math.pi/6       # was math.pi/6 the amount of angular movement before performing an update
         self.sigma = 0.5  # sensor/model noise, tune as needed
         self.eps = 1e-12
-        # TODO: define additional constants if needed
 
         # pose_listener responds to selection of a new approximate robot location (for instance using rviz)
         self.create_subscription(PoseWithCovarianceStamped, 'initialpose', self.update_initial_pose, 10)
@@ -221,22 +220,15 @@ class ParticleFilter(Node):
         print(f"Beginning update robot pose; there are {len(self.particle_cloud)} particles remaining")
         if not self.particle_cloud:
             return
-
+        self.normalize_particles()
         # normalize weights once
-        total_w = sum(p.w for p in self.particle_cloud)
-        if total_w <= 0:
-            n = len(self.particle_cloud)
-            for p in self.particle_cloud:
-                p.w = 1.0 / n
-            total_w = 1.0
 
         sum_x = sum_y = sum_sin = sum_cos = 0.0
         for p in self.particle_cloud:
-            w = p.w / total_w
-            sum_x += p.x * w
-            sum_y += p.y * w
-            sum_sin += math.sin(p.theta) * w
-            sum_cos += math.cos(p.theta) * w
+            sum_x += p.x * p.w # scale by .pw which is normalzied
+            sum_y += p.y * p.w
+            sum_sin += math.sin(p.theta) * p.w
+            sum_cos += math.cos(p.theta) * p.w
 
         theta = math.atan2(sum_sin, sum_cos)
         translation = [sum_x, sum_y, 0.0]
@@ -254,12 +246,10 @@ class ParticleFilter(Node):
         # rotation = quaternion_from_euler(0,0,theta)
         # new_pose = self.transform_helper.convert_translation_rotation_to_pose(translation, rotation)
     
-        # TODO: assign the latest pose into self.robot_pose as a geometry_msgs.Pose object ZARAIUS
         # if hasattr(self, 'robot_pose'):
             # self.get_logger().info(f"Robots old position estimate is x: {self.robot_pose.position.x}, y: {self.robot_pose.position.y}, orientation: {self.robot_pose.orientation.z}")
             # self.get_logger().info(f"Robots new position estimate is {new_pose.position.x}, y: {new_pose.position.y}, orientation {new_pose.orientation.z}")
         # self.get_logger().info(f"Difference in position estimates is {self.robot_pose.position.x - self.new_pose.position.x}")
-
 
         self.robot_pose = new_pose
         if hasattr(self, 'odom_pose'):
@@ -523,19 +513,16 @@ class ParticleFilter(Node):
     def normalize_particles(self):
         """ Make sure the particle weights define a valid distribution (i.e. sum to 1.0) """
         print(f"Beginning normalize particles; there are {len(self.particle_cloud)} particles remaining")
-        weights = [p.w for p in self.particle_cloud]
-        total = sum(weights)
-        if total <= 0:
-            # avoid division by zero — assign uniform weights
-            n = max(1, len(self.particle_cloud))
-            self.particle_cloud = [Particle(p.x,p.y,p.theta,1.0/n) for p in self.particle_cloud]
-            self.sum_weights = 1.0
-            return
-
-        self.sum_weights = total
+        total_w = sum(p.w for p in self.particle_cloud)
+        if total_w <= 0:
+            n = len(self.particle_cloud)
+            for p in self.particle_cloud:
+                p.w = 1.0 / n
+            total_w = 1.0
+        self.sum_weights = total_w
         new_particles = []
         for p in self.particle_cloud:
-            new_particles.append(Particle(p.x,p.y,p.theta,p.w/total))
+            new_particles.append(Particle(p.x,p.y,p.theta,p.w/total_w))
         self.particle_cloud = new_particles
 
     def generate_valid_particles(self,choices,probabilities):
