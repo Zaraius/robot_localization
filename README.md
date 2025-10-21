@@ -15,8 +15,12 @@ After cloning the repository, building with colcon, and souring the `install/` d
 
 ```ros2 bag play src/robot_localization/bags/macfirst_floor_take_2/macfirst_floor_take_2_0.db3 --clock```
 
+Optionally, another executable can be run in order to display the convergence of the algorithm visually. This node can be run with: 
+
+```ros2 launch robot_localization mpl_vis.py ```
+
 There are two bag files inside of the `/bags` folder. We ran our particle filter on the input sensor data and recorded the output. They correspond to the two takes of the input data, particle-filter-take-1 is the output of running our particle filter on macfirst_floor_take_1 and particle-filter-take-2 is the output of macfirst_floor_take_2. The following topics are being recorded: `/accel /odom /cmd_vel /tf /tf_static /base_footprint /map /scan /particle_cloud`
-The `/odom` topic is our estimated robot pose calculated from our particle cloud( BEN CAN YOU VERIFY), whose topic is `/particle_cloud`
+The `/odom` topic is the frame static relative to the map, initialized at the robot's initial position. After every pose estimate update for the robot (calculated from a weighted average of our particle cloud, whose topic is `/particle_cloud`) we update the transform between the map and odom frames in order to ensure the robot's current location in the odom frame aligns with its current position in the map frame; i.e., that our robot's odometry frame position and map frame position correspond to the same physical location.
 
 ### Project Goal
 
@@ -48,6 +52,26 @@ We improved our weighting function by replacing the reciprocal relationship with
 This equation models the likelihood that a given particle’s predicted scan matches the observed scan under a normal distribution of sensor noise. Particles with smaller errors get exponentially higher weights, but not infinitely large ones. The constant σ controls how sharply the weights fall off — effectively tuning how confident we are in the laser scan measurements — and ε ensures no particle gets exactly zero weight, maintaining diversity in the resampling step.
 We also moved from using only the closest beam to incorporating multiple laser beams, which provides more spatial information and allows particles to be evaluated based on a richer representation of the scan. This significantly improved convergence, particularly for orientation, since angular errors are more directly reflected when using multiple beams.
 
+#### Convergence logging and visualization
+
+We decided that measuring the performance of our particle implementation would be difficult when judging subjectively by eye --- it's possible to tell when a filter is clearly not performing well, or when it appears to converge, but quantifying this degree of convergence is more difficult. To do this, we defined and implemented a function `calculate_convergence()`, called once per particle update, which calculates the mean and standard deviation of the particle scores (non-normalized weights) as well as the standard deviations of the particle poses, appending these to a list to each be published to a topic.
+
+We then created a small node to run concurrently with the particle filter, which subscribes to the convergence logging topics and displays the convergence of the algorithm by plotting the standard deviations of particle positions over time using Matplotlib. The node can be run by running the executable `mpl_vis.py` while the particle filter is running. This let us validate, with some degree of detail, the performance of different tuning parameters and approaches. 
+
+For instance, this plot displays the convergence of particle X coordinate, Y coordinate, and orientation over the different iterations given 5000 particles and a weighing function using projected laser endpoints. The large spike in orientation standard deviation occurs during a sharp turn in the robot movement, with the orientation of some of the particles lagging behind for a short amount of time.
+
+![5000 particles, using laser endpoints](media/Convergence_5000particles_laser_endpoint.png)
+
+This converged much better than the run without laser endpoints, which simply used minimum distance to an obstacle at every particle's position for its weight. While this run had position converge to some rough extent, using only the particle position makes the orientation of each particle only indirectly related to score via the motion update; it's therefore unsurprising to see that orientation converges much less than in the better simulation above:
+
+![5000 particles, without laser endpoints](media/Convergence_5000particles_min_dist.png)
+
+Similarly, we observed the effect decreasing the number of particles has on the convergence and stability --- running with a tenth as many particles, 500, we observed similar standard deviations in the best case --- approximately 2 meters for physical position, and 0.5 radians for angle. However, this run was much less stable and frequently drifted from this value:
+
+![500 particles, using laser endpoints](media/Convergence_500particles_laser_endpoint.png)
+
+If we had more time, we could adjust the exact data that makes sense to plot, automatically measure the convergence based on this data, and run a parameter sweep or optimization across our different parameters (number of particles, proportion of particles to draw uniformly random, standard deviations of noise added at different points, reward/cost function, and number of laser scan endpoints to use per particle per iteration), but for the short term, this let us observe that our code was functioning and the improvements were actually present.
+
 ### Challenges
 
 One initial confusion we had was with the method of resampling particles. We were initially concerned that simple moving each particle and choosing some more than others based on weight would not be ideal, as more particles in a less optimal area would be favored over fewer particles in a more optimal area; however, we now realize that so long as a particle is higher weighted than the average particle, it will be sampled equally or more in the next iteration, and will eventually dominate with time. We made this change after first observing the infeasibility of our first method, which was enumerating tuples of coordinates and linearly interpolating the particle weights. Not only would the interpolation make convergence difficult, but enumerating the indices was not at all feasible for the size of our map --- after \(semi-arbitrarily\) choosing to use 360 indices for angle, we calculated that our single list of indices would take over 6GB of RAM, and the interpolation would probably take forever, if we waited enough for it to finish running. 
@@ -63,6 +87,8 @@ One feature we didn't implement for our project was any consideration of an init
 If we had more time, we could spend more time tuning the scoring of particles in a way that would give us more control over what laser scan endpoint discrepancies correspond to what weights. With the naive approach, we just take the reciprocal of each distance to obstacle at every endpoint and sum them together. However, the reciprocal inherently gives much more weight to low errors, and much less to further ones. We could try implementing a reward function / scoring function with more parameters to tune in case we wanted to change the distribution of weight given error. 
 
 We would also like to make certain fixed parameters of our algorithm variable depending on the current state of the particle filter. For instance, we could have an adaptive particle count, where more particles are generated when the particles haven't converged as much, while fewer are generated when it does converge. We could also have the standard deviation of our particle generation noise, or the proportion of our random particles, decrease once our pose estimate converges --- this would be similar to optimization techniques like simulated annealing, where we lower a temperature parameter (our random particle proportions and standard deviations) over time in order to find a good spot to converge initially but hold ourselves tighter to it afterwards. 
+
+Improving or tuning the algorithm would also be made easier using our visual logger plotting convergence data, as we can assume that, typically, better approaches would converge tighter or faster. Doing a parameter sweep and finding which parameters most consistently lead to stable convergence (low standard deviation of particle pose) could help identify which parameters play a key role in helping the algorithm converge, as might quantifying the particle score in a more physically meaningful way. 
 
 ### Lessons Learned
 

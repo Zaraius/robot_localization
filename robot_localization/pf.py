@@ -79,7 +79,7 @@ class ParticleFilter(Node):
         self.odom_frame = "odom"        # the name of the odometry coordinate frame
         self.scan_topic = "scan"        # the topic where we will get laser scans from 
 
-        self.n_particles = 5000          # was 300 the number of particles to use
+        self.n_particles = 5000         # was 300 the number of particles to use
         self.proportion_random = 0.01   # proportion of particles to randomly generate each iteration
         self.xy_std_dev = 0.01           # was 0.5 standard deviation of random changes to linear position
         self.theta_std_dev = 0.2        # was 0.3 standard deviation of random changes to orientation
@@ -211,6 +211,7 @@ class ParticleFilter(Node):
             
             print(f"Update Particle with Odom: {time.perf_counter() - t_resample_start}")
             t_resample_start = time.perf_counter()
+            #self.update_particles_with_laser(r, theta)
             self.update_particles_with_laser_projection(r, theta)   # update based on laser scan
             self.calculate_convergence()
             # Publish convergence data for logging / vis
