@@ -2,25 +2,9 @@
 
 """ This is a simple node to visualize filter convergence and score over time using Matplotlib """
 import rclpy
-from threading import Thread
-from rclpy.time import Time
 from rclpy.node import Node
-from std_msgs.msg import Header, Float32MultiArray
-from sensor_msgs.msg import LaserScan
-from nav2_msgs.msg import ParticleCloud, Particle
-from nav2_msgs.msg import Particle as Nav2Particle
-from geometry_msgs.msg import PoseWithCovarianceStamped, Pose, Point, Quaternion
-from rclpy.duration import Duration
-import math
-import time
-import numpy as np
-from occupancy_field import OccupancyField
-from helper_functions import TFHelper, draw_random_sample
-from rclpy.qos import qos_profile_sensor_data
-from angle_helpers import quaternion_from_euler
-from scipy.interpolate import griddata
+from std_msgs.msg import Float32MultiArray
 import matplotlib as plt
-import scipy.stats as sp
 import matplotlib.pyplot as plt
 
 class ConvergenceVis(Node):
@@ -47,12 +31,12 @@ class ConvergenceVis(Node):
         plt.ion()
         self.fig,self.axes = plt.subplots(1,2)
         plt.show(block=False)
-        self.line_mean, = self.axes[0].plot(range(len(self.mean)),self.mean)
-        self.line_ucb, = self.axes[0].plot(range(len(self.mean)),[self.mean[i] + 2*self.std[i] for i in range(len(self.mean))])
-        self.line_lcb, = self.axes[0].plot(range(len(self.mean)),[self.mean[i] - 2*self.std[i] for i in range(len(self.mean))])
+        #self.line_mean, = self.axes[0].plot(range(len(self.mean)),self.mean)
+        #self.line_ucb, = self.axes[0].plot(range(len(self.mean)),[self.mean[i] + 2*self.std[i] for i in range(len(self.mean))])
+        #self.line_lcb, = self.axes[0].plot(range(len(self.mean)),[self.mean[i] - 2*self.std[i] for i in range(len(self.mean))])
 
-        self.line_x, = self.axes[1].plot(range(len(self.x_std)),self.x_std)
-        self.line_y, = self.axes[1].plot(range(len(self.y_std)),self.y_std)
+        self.line_x, = self.axes[0].plot(range(len(self.x_std)),self.x_std)
+        self.line_y, = self.axes[0].plot(range(len(self.y_std)),self.y_std)
         self.line_theta, = self.axes[1].plot(range(len(self.theta_std)),self.theta_std)
 
         
@@ -64,17 +48,23 @@ class ConvergenceVis(Node):
         print("updating plot")
         self.axes[0].relim()
         self.axes[0].autoscale_view()
-        self.axes[0].legend(["Mean","Mean + 2 * Std Dev","Mean - 2 * Std Dev"])
-        self.axes[0].set_title("Mean and confidence bound for average particle score")
+        #self.axes[0].legend(["Mean","Mean + 2 * Std Dev","Mean - 2 * Std Dev"])
+        #self.axes[0].set_title("Mean and confidence bound for average particle score")
+        self.axes[0].set_title("Standard deviation of particle X and Y over time")
+        self.axes[0].legend(["X std dev (meters)","Y std dev (meters)"])
+        self.axes[0].set_xlabel("Motion update iteration")
+        self.axes[0].set_ylabel("Standard Deviation (meters)")
 
         self.axes[1].relim()
         self.axes[1].autoscale_view()
-        self.axes[1].legend(["X std dev","Y std dev","Theta std dev"])
-        self.axes[1].set_title("Standard deviation particle pose over time")
+        self.axes[1].legend(["Theta std dev (rad)"])
+        self.axes[1].set_title("Standard deviation of particle orientation over time")
+        self.axes[1].set_xlabel("Motion update iteration")
+        self.axes[1].set_ylabel("Standard Deviation (rad)")
 
-        self.line_mean.set_data(range(len(self.mean)),self.mean)
-        self.line_ucb.set_data(range(len(self.mean)),[self.mean[i] + 2*self.std[i] for i in range(len(self.mean))])
-        self.line_lcb.set_data(range(len(self.mean)),[self.mean[i] - 2*self.std[i] for i in range(len(self.mean))])
+        #self.line_mean.set_data(range(len(self.mean)),self.mean)
+        #self.line_ucb.set_data(range(len(self.mean)),[self.mean[i] + 2*self.std[i] for i in range(len(self.mean))])
+        #self.line_lcb.set_data(range(len(self.mean)),[self.mean[i] - 2*self.std[i] for i in range(len(self.mean))])
 
         self.line_x.set_data(range(len(self.x_std)),self.x_std)
         self.line_y.set_data(range(len(self.y_std)),self.y_std)
@@ -86,27 +76,33 @@ class ConvergenceVis(Node):
         plt.show(block=False)
 
     def time_callback(self,msg):
-        """ Callback to record data timestamps"""
+        """ Callback to record data timestamps 
+        Args: msg (Float32MultiArray): array of data to log """
         self.time = msg.data
 
     def mean_callback(self,msg):
-        """ Callback to record particle mean score """
+        """ Callback to record particle mean score
+         Args: msg (Float32MultiArray): array of data to log """
         self.mean = msg.data
 
     def std_callback(self,msg):
-        """ Callback to record particle std dev of score """
+        """ Callback to record particle std dev of score
+         Args: msg (Float32MultiArray): array of data to log """
         self.std = msg.data
 
     def x_callback(self,msg):
-        """ Callback to record particle x std deviation """
+        """ Callback to record particle x std deviation
+         Args: msg (Float32MultiArray): array of data to log """
         self.x_std = msg.data
 
     def y_callback(self,msg):
-        """ Callback to record particle y std deviation """
+        """ Callback to record particle y std deviation
+         Args: msg (Float32MultiArray): array of data to log """
         self.y_std = msg.data
 
     def theta_callback(self,msg):
-        """ Callback to record particle theta std deviation """
+        """ Callback to record particle theta std deviation
+         Args: msg (Float32MultiArray): array of data to log """
         self.theta_std = msg.data
 
 def main():

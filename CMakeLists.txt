@@ -26,6 +26,7 @@ endif()
 
 install(PROGRAMS
         robot_localization/pf.py
+        robot_localization/mpl_vis.py
         DESTINATION lib/${PROJECT_NAME})
 
 
