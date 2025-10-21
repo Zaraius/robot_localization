@@ -10,9 +10,34 @@ import matplotlib.pyplot as plt
 class ConvergenceVis(Node):
     """
     Class to visualize filter convergence 
+
+    Attributes:
+        time: float array of timestamps of particle updates, converted to seconds
+        mean: float array of mean particle scores over time
+        std: float array of std deviation of particle scores over time
+        x_std: float array of std deviations of particle X position over time
+        y_std: float array of std deviations of particle Y position over time
+        theta_std: float array of std deviations of particle theta over time
+
+        time_sub, mean_sub, std_sub, x_std_sub, x_std_pub, theta_std_sub: subscribers to float arrays mentioned above,
+            respectively
+        
+        timer: ROS2 timer with a callback to update the plot
+        fig,axes: Matplotlib Figure object and Axes list describing the drawn figure
+        line_x,line_y,line_theta: lines for plotting particle position and orientation convergence over time
     """
     def __init__(self):
+        """ Initialize attributes and Matplotlib figure """
+        self.time = []
+        self.mean = []
+        self.std = []
+        self.x_std = []
+        self.y_std = []
+        self.theta_std = []
+
         super().__init__('vis')
+
+        # initialize subscriptions
         self.time_sub = self.create_subscription(Float32MultiArray, "/metric/time", self.time_callback, 10)
         self.mean_sub = self.create_subscription(Float32MultiArray, "/metric/mean", self.mean_callback, 10)
         self.std_sub = self.create_subscription(Float32MultiArray, "/metric/std", self.std_callback, 10)
@@ -21,13 +46,6 @@ class ConvergenceVis(Node):
         self.theta_std_sub = self.create_subscription(Float32MultiArray, "/metric/theta_std", self.theta_callback, 10)
         self.timer = self.create_timer(2,self.update_plot)
 
-        self.time = []
-        self.mean = []
-        self.std = []
-        self.x_std = []
-        self.y_std = []
-        self.theta_std = []
-
         plt.ion()
         self.fig,self.axes = plt.subplots(1,2)
         plt.show(block=False)
@@ -35,6 +53,7 @@ class ConvergenceVis(Node):
         #self.line_ucb, = self.axes[0].plot(range(len(self.mean)),[self.mean[i] + 2*self.std[i] for i in range(len(self.mean))])
         #self.line_lcb, = self.axes[0].plot(range(len(self.mean)),[self.mean[i] - 2*self.std[i] for i in range(len(self.mean))])
 
+        # initialize lines to plot displaying convergence of position and orientation
         self.line_x, = self.axes[0].plot(range(len(self.x_std)),self.x_std)
         self.line_y, = self.axes[0].plot(range(len(self.y_std)),self.y_std)
         self.line_theta, = self.axes[1].plot(range(len(self.theta_std)),self.theta_std)
