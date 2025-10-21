@@ -6,7 +6,7 @@ import rclpy
 from threading import Thread
 from rclpy.time import Time
 from rclpy.node import Node
-from std_msgs.msg import Header
+from std_msgs.msg import Header, Float32MultiArray
 from sensor_msgs.msg import LaserScan
 from nav2_msgs.msg import ParticleCloud, Particle
 from nav2_msgs.msg import Particle as Nav2Particle
@@ -107,12 +107,20 @@ class ParticleFilter(Node):
         # your particle cloud will go here
         self.particle_cloud = []
         self.sum_weights = 1
+
+        self.timestamps = []
         self.weight_means = []
         self.weight_stds = []
-
         self.std_x = []
         self.std_y = []
         self.std_theta = []
+
+        self.time_pub = self.create_publisher(Float32MultiArray, "/metric/time", 10)
+        self.mean_pub = self.create_publisher(Float32MultiArray, "/metric/mean", 10)
+        self.std_pub = self.create_publisher(Float32MultiArray, "/metric/std", 10)
+        self.x_std_pub = self.create_publisher(Float32MultiArray, "/metric/x_std", 10)
+        self.y_std_pub = self.create_publisher(Float32MultiArray, "/metric/y_std", 10)
+        self.theta_std_pub = self.create_publisher(Float32MultiArray, "/metric/theta_std", 10)
 
         self.sample_count = 20
 
@@ -133,6 +141,15 @@ class ParticleFilter(Node):
         postdated_timestamp = Time.from_msg(self.last_scan_timestamp) + Duration(seconds=0.1)
         self.transform_helper.send_last_map_to_odom_transform(self.map_frame, self.odom_frame, postdated_timestamp)
         #print("\n\n\n\nPUB LATEST TRANSFORM HAS RUN\n\n\n\n")
+
+    def pub_logging_data(self):
+        """ Publishes convergence data to log or visualize """
+        self.time_pub.publish(Float32MultiArray(data=self.timestamps))
+        self.mean_pub.publish(Float32MultiArray(data=self.weight_means))
+        self.std_pub.publish(Float32MultiArray(data=self.weight_stds))
+        self.x_std_pub.publish(Float32MultiArray(data=self.std_x))
+        self.y_std_pub.publish(Float32MultiArray(data=self.std_y))
+        self.theta_std_pub.publish(Float32MultiArray(data=self.std_theta))
 
     def loop_wrapper(self):
         """ This function takes care of calling the run_loop function repeatedly.
@@ -196,6 +213,8 @@ class ParticleFilter(Node):
             t_resample_start = time.perf_counter()
             self.update_particles_with_laser_projection(r, theta)   # update based on laser scan
             self.calculate_convergence()
+            # Publish convergence data for logging / vis
+            self.pub_logging_data()
             # print(f"Convergence:\nMean: {self.weight_means},\nStd Dev: {self.weight_stds}")
             # print(f"Update Particle with Laser: {time.perf_counter() - t_resample_start}")
             t_resample_start = time.perf_counter()
@@ -552,8 +571,9 @@ class ParticleFilter(Node):
         theta = [p.theta for p in self.particle_cloud]
 
         self.std_x.append(np.std(x))
-        self.std_x.append(np.std(y))
-        self.std_x.append(np.std(theta))
+        self.std_y.append(np.std(y))
+        self.std_theta.append(np.std(theta))
+        self.timestamps.append(self.get_clock().now().nanoseconds/1e9)
 
         unscaled_weights = [p.w * self.sum_weights for p in self.particle_cloud]
         mean = np.mean(unscaled_weights)
